@@ -5,3 +5,7 @@ psycopg2-binary
 scikit-learn
 pytz
 pillow
+python-barcode
+reportlab
+pandas
+alembic
