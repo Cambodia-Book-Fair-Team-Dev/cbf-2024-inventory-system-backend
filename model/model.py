@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, Integer, String, ForeignKey
+from sqlalchemy import Boolean, Column, DateTime, Integer, String, ForeignKey
 from model.database import Base, engine
 
 
@@ -10,6 +10,10 @@ class Volunteer(Base):
     team = Column(String(100))
     name = Column(String(100))
 
+class Category(Base):
+    __tablename__ = 'category'
+    id = Column(String(10), primary_key=True)
+    name = Column(String(100))
 
 class Item(Base):
     __tablename__ = 'item'
@@ -17,7 +21,7 @@ class Item(Base):
     item_name = Column(String(200))
     qty = Column(Integer)
     unit = Column(String(50))
-    category = Column(String(100))
+    category_id = Column(String(10), ForeignKey('category.id'))
 
 
 class Transaction(Base):
@@ -29,6 +33,7 @@ class Transaction(Base):
     return_time = Column(DateTime)
     qty_borrowed = Column(Integer)
     status = Column(String(50))
+    is_reusable = Column(Boolean, default=False)
 
 
 def create_tables():

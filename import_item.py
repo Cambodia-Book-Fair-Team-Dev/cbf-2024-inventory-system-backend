@@ -1,7 +1,6 @@
 import csv
 from sqlalchemy.orm import sessionmaker
-# Import the engine instance and Item model
-from model.model import Item, engine
+from model.model import Item, Category, engine
 
 # Create a session factory bound to the engine
 Session = sessionmaker(bind=engine)
@@ -18,7 +17,15 @@ with open(csv_file_path, newline='', encoding='utf-8') as csvfile:
     for row in reader:
         # Extract category from the code
         # Assuming the first two characters represent the category
-        category = row['CODE'][:2]
+        category_code = row['CODE'][:2]
+
+        # Find the category by code
+        category = session.query(Category).filter_by(id=category_code).first()
+        if not category:
+            # If the category does not exist, create a new one with a default name
+            category = Category(id=category_code, name='Default Category Name')
+            session.add(category)
+            session.commit()  # Commit to get the category ID
 
         # Find the item by code
         item = session.query(Item).filter_by(code=row['CODE']).first()
@@ -27,7 +34,7 @@ with open(csv_file_path, newline='', encoding='utf-8') as csvfile:
             item.item_name = row['Name']
             item.qty = row['Qty']
             item.unit = row['Unit']
-            item.category = category
+            item.category_id = category.id
         else:
             # Add new record
             new_item = Item(
@@ -35,7 +42,7 @@ with open(csv_file_path, newline='', encoding='utf-8') as csvfile:
                 item_name=row['Name'],
                 qty=row['Qty'],
                 unit=row['Unit'],
-                category=category
+                category_id=category.id
             )
             session.add(new_item)
 
