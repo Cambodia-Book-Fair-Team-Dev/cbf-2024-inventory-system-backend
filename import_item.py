@@ -9,7 +9,7 @@ Session = sessionmaker(bind=engine)
 session = Session()
 
 # Path to your CSV file
-csv_file_path = 'import_file/item/catagory_01_filtered.csv'
+csv_file_path = 'import_file/item/combined_category.csv'
 
 # Read the CSV file and add/update records
 with open(csv_file_path, newline='', encoding='utf-8') as csvfile:

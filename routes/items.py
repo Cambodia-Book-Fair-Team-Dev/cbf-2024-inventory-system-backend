@@ -1,5 +1,6 @@
+from pydantic import BaseModel
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import Transaction
@@ -25,9 +26,21 @@ class BorrowRequest(BaseModel):
     qty: int = Field(..., gt=0, description="Quantity must be greater than 0")
 
 
+class BorrowedItemResponse(BaseModel):
+    transaction_id: str
+    item_code: str
+    volunteer_name: str
+    team: str
+    item_name: str
+    qty_borrowed: int
+    borrow_time: datetime
+    return_time: Optional[datetime] = None
+    status: str
+
 class ReturnItem(BaseModel):
     transaction_id: str
     qty_returned: int
+    status: str
 
 
 class ReturnRequest(BaseModel):
@@ -38,6 +51,31 @@ def read_items(db: Session = Depends(get_db)):
     items = db.query(Item).all()
     return items
 
+
+@router.get("/borrowed-items", response_model=List[BorrowedItemResponse], tags=["Items"])
+def get_borrowed_items(db: Session = Depends(get_db)):
+    transactions = db.query(Transaction).all()
+    borrowed_items = []
+
+    for transaction in transactions:
+        volunteer = db.query(Volunteer).filter(
+            Volunteer.id == transaction.volunteer_id).first()
+        item = db.query(Item).filter(
+            Item.code == transaction.item_code).first()
+
+        borrowed_items.append(BorrowedItemResponse(
+            transaction_id=transaction.transaction_id,
+            item_code=transaction.item_code,
+            volunteer_name=volunteer.name,
+            team=volunteer.team,
+            item_name=item.item_name,
+            qty_borrowed=transaction.qty_borrowed,
+            borrow_time=transaction.borrow_time,
+            return_time=transaction.return_time,
+            status=transaction.status
+        ))
+
+    return borrowed_items
 
 @router.get("/scan/item/{item_code}", tags=["Items"])
 def scan_items(item_code: str, db: Session = Depends(get_db)):
@@ -76,7 +114,44 @@ def borrow_item(volunteer_id: str, request: BorrowRequest, db: Session = Depends
     db.refresh(transaction)
     return {"message": "Item borrowed successfully", "transaction": transaction}
 
-# Return Endpoint
+# # Return Endpoint
+# @router.post("/volunteer/{volunteer_id}/return", tags=["Scan"])
+# def return_items(volunteer_id: str, request: ReturnRequest, db: Session = Depends(get_db)):
+#     volunteer = db.query(Volunteer).filter(
+#         Volunteer.id == volunteer_id).first()
+#     if not volunteer:
+#         raise HTTPException(status_code=404, detail="Volunteer not found")
+
+#     for item in request.items:
+#         transaction = db.query(Transaction).filter(
+#             Transaction.transaction_id == item.transaction_id,
+#             Transaction.status == "borrowed"
+#         ).first()
+#         if not transaction:
+#             raise HTTPException(
+#                 status_code=404, detail=f"Transaction {item.transaction_id} not found")
+
+#         transaction.status = "returned"
+#         transaction.return_time = datetime.utcnow()
+
+#         item_record = db.query(Item).filter(
+#             Item.code == transaction.item_code).first()
+#         if item_record:
+#             item_record.qty += item.qty_returned
+
+#         db.add(transaction)
+#         db.add(item_record)
+
+#     db.commit()
+#     return {"message": "Items returned successfully"}
+
+# retrun endpoint
+
+
+class ReturnItem(BaseModel):
+    transaction_id: str
+    qty_returned: int
+    status: str
 
 
 @router.post("/volunteer/{volunteer_id}/return", tags=["Scan"])
@@ -95,20 +170,26 @@ def return_items(volunteer_id: str, request: ReturnRequest, db: Session = Depend
             raise HTTPException(
                 status_code=404, detail=f"Transaction {item.transaction_id} not found")
 
-        transaction.status = "returned"
+        if item.status not in ["returned", "lost", "used up"]:
+            raise HTTPException(
+                status_code=400, detail="Invalid status")
+
+        # Update the transaction's status
+        transaction.status = item.status
         transaction.return_time = datetime.utcnow()
 
-        item_record = db.query(Item).filter(
-            Item.code == transaction.item_code).first()
-        if item_record:
-            item_record.qty += item.qty_returned
+        # Update the stock only if the status is "returned"
+        if transaction.status == "returned":
+            item_record = db.query(Item).filter(
+                Item.code == transaction.item_code).first()
+            if item_record:
+                item_record.qty += item.qty_returned
+            db.add(item_record)
 
         db.add(transaction)
-        db.add(item_record)
 
     db.commit()
-    return {"message": "Items returned successfully"}
-
+    return {"message": "Items processed successfully"}
 
 @router.post("/scan/transaction", tags=["Scan"])
 def create_transaction(volunteer_id: str, item_code: str, qty_borrowed: int, db: Session = Depends(get_db)):
