@@ -174,22 +174,48 @@ def return_items(volunteer_id: str, request: ReturnRequest, db: Session = Depend
             raise HTTPException(
                 status_code=400, detail="Invalid status")
 
-        # Update the transaction's status
-        transaction.status = item.status
-        transaction.return_time = datetime.utcnow()
+        if item.qty_returned > transaction.qty_borrowed:
+            raise HTTPException(
+                status_code=400, detail="Returned quantity exceeds borrowed quantity")
 
-        # Update the stock only if the status is "returned"
-        if transaction.status == "returned":
+        # If the returned quantity is equal to the borrowed quantity, do not update
+        if item.qty_returned == transaction.qty_borrowed:
+            transaction.status = item.status
+            transaction.return_time = datetime.utcnow()
+        else:
+            # Update the original transaction to reflect the returned/lost/used-up items
+            transaction.qty_borrowed -= item.qty_returned
+
+            # Create a new transaction for the kept items
+            kept_qty = transaction.qty_borrowed
+            new_transaction = Transaction(
+                transaction_id=str(uuid.uuid4()),
+                volunteer_id=volunteer_id,
+                item_code=transaction.item_code,
+                qty_borrowed=kept_qty,
+                borrow_time=transaction.borrow_time,
+                status="borrowed"
+            )
+            db.add(new_transaction)
+
+            # Update the original transaction to reflect the returned/lost/used-up items
+            transaction.qty_borrowed = item.qty_returned
+            transaction.status = item.status
+            transaction.return_time = datetime.utcnow() if item.status == "returned" else None
+
+        # Update stock if the status is "returned"
+        if item.status == "returned":
             item_record = db.query(Item).filter(
                 Item.code == transaction.item_code).first()
             if item_record:
                 item_record.qty += item.qty_returned
-            db.add(item_record)
+                db.add(item_record)
 
         db.add(transaction)
 
     db.commit()
     return {"message": "Items processed successfully"}
+
 
 @router.post("/scan/transaction", tags=["Scan"])
 def create_transaction(volunteer_id: str, item_code: str, qty_borrowed: int, db: Session = Depends(get_db)):
