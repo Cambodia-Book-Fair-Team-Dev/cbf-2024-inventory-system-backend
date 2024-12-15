@@ -1,3 +1,6 @@
+from barcode import Code128
+from barcode.writer import ImageWriter
+from sqlalchemy.exc import NoResultFound
 from pydantic import BaseModel
 from datetime import datetime
 from typing import List, Optional
@@ -305,3 +308,41 @@ def get_borrowed_items(volunteer_id: str, db: Session = Depends(get_db)):
         })
 
     return {"volunteer_id": volunteer_id, "borrowed_items": borrowed_items}
+
+# add new item
+@router.put("/items/{item_code}/update-qty", tags=["Items"])
+def update_item_qty(item_code: str, qty: int, db: Session = Depends(get_db)):
+    try:
+        item = db.query(Item).filter(Item.code == item_code).one()
+        item.qty += qty
+        db.add(item)
+        db.commit()
+        db.refresh(item)
+        return {"message": "Item quantity updated successfully", "item": item}
+    except NoResultFound:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+
+@router.post("/items", tags=["Items"])
+def add_item(
+    category_id: str,
+    item_name: str,
+    qty: int,
+    unit: str,
+    db: Session = Depends(get_db)
+):
+    code = str(uuid.uuid4())[:8]  # Generate a unique code
+    barcode = Code128(code, writer=ImageWriter())
+    barcode.save(f"barcodes/{code}")  # Save barcode image
+
+    new_item = Item(
+        category_id=category_id,
+        item_name=item_name,
+        qty=qty,
+        unit=unit,
+        code=code,
+    )
+    db.add(new_item)
+    db.commit()
+    db.refresh(new_item)
+    return {"message": "New item added successfully", "item": new_item}
