@@ -8,9 +8,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import Transaction
 from sqlalchemy.orm import Session
-from model.model import Item, Volunteer,Transaction
+from model.model import Item, Volunteer, Transaction
 from model.database import Session as DBSession
 import uuid
+import pytz
 
 router = APIRouter()
 
@@ -23,7 +24,13 @@ def get_db():
         db.close()
 
 
+def get_cambodia_time():
+    cambodia_timezone = pytz.timezone('Asia/Phnom_Penh')
+    return datetime.now(cambodia_timezone)
+
 # Request Models
+
+
 class BorrowRequest(BaseModel):
     item_code: str
     qty: int = Field(..., gt=0, description="Quantity must be greater than 0")
@@ -40,6 +47,7 @@ class BorrowedItemResponse(BaseModel):
     return_time: Optional[datetime] = None
     status: str
 
+
 class ReturnItem(BaseModel):
     transaction_id: str
     qty_returned: int
@@ -49,9 +57,10 @@ class ReturnItem(BaseModel):
 class ReturnRequest(BaseModel):
     items: List[ReturnItem]
 
+
 @router.get("/items", tags=["Items"])
 def read_items(db: Session = Depends(get_db)):
-    items = db.query(Item).all()
+    items = db.query(Item).order_by(Item.code).all()
     return items
 
 
@@ -73,12 +82,15 @@ def get_borrowed_items(db: Session = Depends(get_db)):
             team=volunteer.team,
             item_name=item.item_name,
             qty_borrowed=transaction.qty_borrowed,
-            borrow_time=transaction.borrow_time,
-            return_time=transaction.return_time,
+            borrow_time=transaction.borrow_time.astimezone(
+                pytz.timezone('Asia/Phnom_Penh')),
+            return_time=transaction.return_time.astimezone(pytz.timezone(
+                'Asia/Phnom_Penh')) if transaction.return_time else None,
             status=transaction.status
         ))
 
     return borrowed_items
+
 
 @router.get("/scan/item/{item_code}", tags=["Items"])
 def scan_items(item_code: str, db: Session = Depends(get_db)):
@@ -88,6 +100,8 @@ def scan_items(item_code: str, db: Session = Depends(get_db)):
     return item
 
 # Borrow Endpoint
+
+
 @router.post("/volunteer/{volunteer_id}/borrow", tags=["Scan"])
 def borrow_item(volunteer_id: str, request: BorrowRequest, db: Session = Depends(get_db)):
     volunteer = db.query(Volunteer).filter(
@@ -107,7 +121,7 @@ def borrow_item(volunteer_id: str, request: BorrowRequest, db: Session = Depends
         volunteer_id=volunteer_id,
         item_code=request.item_code,
         qty_borrowed=request.qty,
-        borrow_time=datetime.utcnow(),
+        borrow_time=get_cambodia_time(),
         status="borrowed"
     )
     item.qty -= request.qty
@@ -116,45 +130,6 @@ def borrow_item(volunteer_id: str, request: BorrowRequest, db: Session = Depends
     db.commit()
     db.refresh(transaction)
     return {"message": "Item borrowed successfully", "transaction": transaction}
-
-# # Return Endpoint
-# @router.post("/volunteer/{volunteer_id}/return", tags=["Scan"])
-# def return_items(volunteer_id: str, request: ReturnRequest, db: Session = Depends(get_db)):
-#     volunteer = db.query(Volunteer).filter(
-#         Volunteer.id == volunteer_id).first()
-#     if not volunteer:
-#         raise HTTPException(status_code=404, detail="Volunteer not found")
-
-#     for item in request.items:
-#         transaction = db.query(Transaction).filter(
-#             Transaction.transaction_id == item.transaction_id,
-#             Transaction.status == "borrowed"
-#         ).first()
-#         if not transaction:
-#             raise HTTPException(
-#                 status_code=404, detail=f"Transaction {item.transaction_id} not found")
-
-#         transaction.status = "returned"
-#         transaction.return_time = datetime.utcnow()
-
-#         item_record = db.query(Item).filter(
-#             Item.code == transaction.item_code).first()
-#         if item_record:
-#             item_record.qty += item.qty_returned
-
-#         db.add(transaction)
-#         db.add(item_record)
-
-#     db.commit()
-#     return {"message": "Items returned successfully"}
-
-# retrun endpoint
-
-
-class ReturnItem(BaseModel):
-    transaction_id: str
-    qty_returned: int
-    status: str
 
 
 @router.post("/volunteer/{volunteer_id}/return", tags=["Scan"])
@@ -184,7 +159,7 @@ def return_items(volunteer_id: str, request: ReturnRequest, db: Session = Depend
         # If the returned quantity is equal to the borrowed quantity, do not update
         if item.qty_returned == transaction.qty_borrowed:
             transaction.status = item.status
-            transaction.return_time = datetime.utcnow()
+            transaction.return_time = get_cambodia_time()
         else:
             # Update the original transaction to reflect the returned/lost/used-up items
             transaction.qty_borrowed -= item.qty_returned
@@ -204,7 +179,7 @@ def return_items(volunteer_id: str, request: ReturnRequest, db: Session = Depend
             # Update the original transaction to reflect the returned/lost/used-up items
             transaction.qty_borrowed = item.qty_returned
             transaction.status = item.status
-            transaction.return_time = datetime.utcnow() if item.status == "returned" else None
+            transaction.return_time = get_cambodia_time() if item.status == "returned" else None
 
         # Update stock if the status is "returned"
         if item.status == "returned":
@@ -245,7 +220,7 @@ def create_transaction(volunteer_id: str, item_code: str, qty_borrowed: int, db:
         volunteer_id=volunteer_id,
         item_code=item_code,
         qty_borrowed=qty_borrowed,
-        borrow_time=datetime.utcnow(),
+        borrow_time=get_cambodia_time(),
         status="borrowed"
     )
     db.add(transaction)
@@ -274,7 +249,7 @@ def return_transaction(transaction_id: str, qty_returned: int, db: Session = Dep
     db.add(item)
 
     # Update the transaction
-    transaction.return_time = datetime.utcnow()
+    transaction.return_time = get_cambodia_time()
     transaction.status = "returned"
     db.add(transaction)
     db.commit()
@@ -304,17 +279,23 @@ def get_borrowed_items(volunteer_id: str, db: Session = Depends(get_db)):
             "item_code": item.code,
             "item_name": item.item_name,
             "qty_borrowed": transaction.qty_borrowed,
-            "borrow_time": transaction.borrow_time
+            "borrow_time": transaction.borrow_time.astimezone(pytz.timezone('Asia/Phnom_Penh'))
         })
 
     return {"volunteer_id": volunteer_id, "borrowed_items": borrowed_items}
 
-# add new item
+# Add QTY for each Product
+
+
+class UpdateQtyRequest(BaseModel):
+    qty: int
+
+
 @router.put("/items/{item_code}/update-qty", tags=["Items"])
-def update_item_qty(item_code: str, qty: int, db: Session = Depends(get_db)):
+def update_item_qty(item_code: str, request: UpdateQtyRequest, db: Session = Depends(get_db)):
     try:
         item = db.query(Item).filter(Item.code == item_code).one()
-        item.qty += qty
+        item.qty += request.qty
         db.add(item)
         db.commit()
         db.refresh(item)
@@ -323,24 +304,37 @@ def update_item_qty(item_code: str, qty: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Item not found")
 
 
-@router.post("/items", tags=["Items"])
-def add_item(
-    category_id: str,
-    item_name: str,
-    qty: int,
-    unit: str,
-    db: Session = Depends(get_db)
-):
-    code = str(uuid.uuid4())[:8]  # Generate a unique code
-    barcode = Code128(code, writer=ImageWriter())
-    barcode.save(f"barcodes/{code}")  # Save barcode image
+class NewItemRequest(BaseModel):
+    category_id: str
+    item_name: str
+    qty: int
+    unit: str
 
+
+@router.post("/items", tags=["Items"])
+def add_new_item(request: NewItemRequest, db: Session = Depends(get_db)):
+    # Get the highest item code in the specified category
+    highest_item_code = db.query(Item).filter(
+        Item.category_id == request.category_id).order_by(Item.code.desc()).first()
+
+    if highest_item_code:
+        # Extract the numeric part of the item code and increment it
+        last_number = int(highest_item_code.code.split('-')[1])
+        new_number = last_number + 1
+    else:
+        # If no items exist in the category, start with 1
+        new_number = 1
+
+    # Generate the new item code with four digits
+    item_code = f"{request.category_id}-{new_number:02d}-0001"
+
+    # Create the new item
     new_item = Item(
-        category_id=category_id,
-        item_name=item_name,
-        qty=qty,
-        unit=unit,
-        code=code,
+        category_id=request.category_id,
+        code=item_code,
+        item_name=request.item_name,
+        qty=request.qty,
+        unit=request.unit
     )
     db.add(new_item)
     db.commit()
